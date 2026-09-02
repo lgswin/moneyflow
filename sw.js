@@ -1,4 +1,4 @@
-const CACHE = 'money-flow-pages-v1';
+const CACHE = 'money-flow-pages-v0.2.0';
 const scopedUrl = path => new URL(path, self.registration.scope).toString();
 const APP_SHELL = ['', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'].map(scopedUrl);
 

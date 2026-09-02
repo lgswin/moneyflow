@@ -64,8 +64,11 @@ const NAV: { id: View; label: string; icon: string }[] = [
   { id: 'reports', label: '리포트', icon: '▥' },
 ];
 
-const TYPE_LABEL: Record<TxType, string> = { Expense: '지출', Income: '수입', Transfer: '송금', Borrow: '빌림', Repayment: '상환' };
-const TYPE_CLASS: Record<TxType, string> = { Expense: 'expense', Income: 'income', Transfer: 'transfer', Borrow: 'borrow', Repayment: 'repay' };
+const TYPE_LABEL: Record<TxType, string> = { Expense: '지출', Income: '입금', Transfer: '송금', Borrow: '입금', Repayment: '상환' };
+const TYPE_CLASS: Record<TxType, string> = { Expense: 'expense', Income: 'income', Transfer: 'transfer', Borrow: 'income', Repayment: 'repay' };
+const FILTERS = ['All', 'Income', 'Transfer', 'Expense'] as const;
+const APP_VERSION = '0.2.0';
+const APP_VERSION_KEY = 'money-flow-app-version';
 const ROLE_LABEL: Record<Account['role'], string> = { spending: '입금 · 송금 · 지출', bridge: '입금 · 송금 · 지출', external: '입금 · 송금 · 지출' };
 const ROLE_NAME: Record<Account['role'], string> = { spending: '지출 계좌', bridge: '경유 계좌', external: '외부 계좌' };
 
@@ -132,7 +135,7 @@ export default function Home() {
   const [loanOpen, setLoanOpen] = useState(false);
   const [accountForm, setAccountForm] = useState<Account | 'new' | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
-  const [filter, setFilter] = useState<'All' | TxType>('All');
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
   const [toast, setToast] = useState('');
   const [installEvent, setInstallEvent] = useState<Event | null>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
@@ -140,7 +143,10 @@ export default function Home() {
 
   useEffect(() => {
     try { const saved = localStorage.getItem('money-flow-v1'); if (saved) setData(migrateWalletData(JSON.parse(saved))); } catch { /* keep sample data */ }
+    const previousVersion = localStorage.getItem(APP_VERSION_KEY);
+    localStorage.setItem(APP_VERSION_KEY, APP_VERSION);
     setHydrated(true);
+    if (previousVersion && previousVersion !== APP_VERSION) setToast(`앱이 ${APP_VERSION}으로 업데이트되었어요.`);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => undefined);
     const beforeInstall = (event: Event) => { event.preventDefault(); setInstallEvent(event); };
     window.addEventListener('beforeinstallprompt', beforeInstall);
@@ -158,7 +164,7 @@ export default function Home() {
   const spendingIds = new Set(spendingAccounts.map(a => a.id));
   const monthExpense = data.transactions.filter(t => t.type === 'Expense' && t.date.startsWith('2026-09') && spendingIds.has(t.fromAccountId || '')).reduce((sum, t) => sum + (t.sentAmount || 0), 0);
   const spendingTransactions = data.transactions.filter(t => t.type === 'Expense' && spendingIds.has(t.fromAccountId || ''));
-  const filteredTransactions = data.transactions.filter(t => filter === 'All' || t.type === filter).sort((a, b) => b.date.localeCompare(a.date));
+  const filteredTransactions = data.transactions.filter(t => filter === 'All' || (filter === 'Income' ? t.type === 'Income' || t.type === 'Borrow' : t.type === filter)).sort((a, b) => b.date.localeCompare(a.date));
   const categoryTotals = useMemo(() => {
     const totals: Record<string, number> = {};
     spendingTransactions.forEach(t => { totals[t.category || '기타'] = (totals[t.category || '기타'] || 0) + (t.sentAmount || 0); });
@@ -217,7 +223,7 @@ export default function Home() {
     const totalPaid = data.loans.reduce((sum, loan) => sum + (repayments[loan.id] || 0), 0);
     const progress = totalLoan ? Math.min(100, totalPaid / totalLoan * 100) : 100;
     return <>
-      <PageHeader eyebrow="2026년 9월" title="오늘의 자금 흐름을 확인하세요." action={() => openTransaction({ type: 'Expense' })} actionLabel="＋ 거래 추가" />
+      <PageHeader eyebrow="2026년 9월" title="오늘의 자금 흐름을 확인하세요." action={() => openTransaction({ type: 'Expense', simple: true })} actionLabel="＋ 거래 추가" />
       <div className="metric-grid">
         <Metric label="현금 자산" value={money(cashCAD, 'CAD')} note={`적용 환율 1 CAD = ${money(data.cadKrwRate, 'KRW')}`} tone="green" />
         <Metric label="남은 대여금" value={money(outstanding, 'CAD')} note={`${(100 - progress).toFixed(1)}% 남음`} tone="gold" />
@@ -258,8 +264,8 @@ export default function Home() {
   </>;
 
   const renderTransactions = () => <>
-    <PageHeader eyebrow="TRANSACTIONS" title="거래 내역" subtitle="수입·지출·송금·빌림·상환을 정확히 구분해 기록합니다." action={() => openTransaction({ type: 'Expense' })} actionLabel="＋ 거래 추가" />
-    <div className="filter-row">{(['All', 'Expense', 'Income', 'Transfer', 'Borrow', 'Repayment'] as const).map(item => <button key={item} className={filter === item ? 'filter active' : 'filter'} onClick={() => setFilter(item)}>{item === 'All' ? '전체' : TYPE_LABEL[item]}</button>)}</div>
+    <PageHeader eyebrow="TRANSACTIONS" title="거래 내역" subtitle="입금·송금·지출만 기록합니다. 대여금은 입금에서 지정하세요." action={() => openTransaction({ type: 'Expense', simple: true })} actionLabel="＋ 거래 추가" />
+    <div className="filter-row">{FILTERS.map(item => <button key={item} className={filter === item ? 'filter active' : 'filter'} onClick={() => setFilter(item)}>{item === 'All' ? '전체' : TYPE_LABEL[item]}</button>)}</div>
     <section className="panel transaction-table">
       <div className="table-header"><span>거래</span><span>유형</span><span>날짜</span><span>금액</span></div>
       {filteredTransactions.map(tx => <TransactionRow key={tx.id} tx={tx} accountName={accountName} accountCurrency={accountCurrency} table />)}
@@ -297,20 +303,20 @@ export default function Home() {
       </article>
     </div>
     <section className="panel data-panel"><PanelHeading eyebrow="YOUR DATA" title="백업 및 가져오기" />
-      <p>모든 데이터는 현재 기기의 브라우저에 저장됩니다. 정기적으로 백업 파일을 내려받아 보관하세요.</p>
+      <p>앱 버전 {APP_VERSION}. 모든 데이터는 현재 기기의 브라우저에 저장됩니다. 정기적으로 백업 파일을 내려받아 보관하세요.</p>
       <div className="data-actions"><button className="secondary" onClick={backup}>JSON 백업</button><button className="secondary" onClick={() => restoreRef.current?.click()}>JSON 복원</button><button className="secondary" onClick={exportCsv}>CSV 내보내기</button><button className="secondary" onClick={() => csvRef.current?.click()}>CSV 가져오기</button></div>
     </section>
   </>;
 
   return <main className="app-shell">
     <aside className="sidebar">
-      <button className="brand" onClick={() => go('dashboard')}><span className="brand-mark">M</span><span>Money Flow</span></button>
+      <button className="brand" onClick={() => go('dashboard')}><span className="brand-mark">M</span><span>Money Flow<small className="brand-version">v{APP_VERSION}</small></span></button>
       <nav aria-label="주 메뉴">{NAV.map(item => <button key={item.id} className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => go(item.id)}><span>{item.icon}</span><b>{item.label}</b></button>)}</nav>
       <div className="sidebar-tools"><button onClick={install}>앱 설치</button><button onClick={backup}>백업</button></div>
       <div className="privacy-note"><span className="status-dot" />이 기기에 안전하게 저장됨</div>
     </aside>
     <section className="content">{view === 'dashboard' && renderDashboard()}{view === 'accounts' && renderAccounts()}{view === 'transactions' && renderTransactions()}{view === 'loans' && renderLoans()}{view === 'reports' && renderReports()}</section>
-    <button className="mobile-add" aria-label={view === 'accounts' ? '계좌 추가' : view === 'loans' ? '대여금 추가' : '거래 추가'} onClick={() => { if (view === 'accounts') setAccountForm('new'); else if (view === 'loans') setLoanOpen(true); else openTransaction({ type: 'Expense' }); }}>＋</button>
+    <button className="mobile-add" aria-label={view === 'accounts' ? '계좌 추가' : view === 'loans' ? '대여금 추가' : '거래 추가'} onClick={() => { if (view === 'accounts') setAccountForm('new'); else if (view === 'loans') setLoanOpen(true); else openTransaction({ type: 'Expense', simple: true }); }}>＋</button>
     <input ref={restoreRef} hidden type="file" accept="application/json,.json" onChange={restoreJson} /><input ref={csvRef} hidden type="file" accept="text/csv,.csv" onChange={importCsv} />
     {selectedAccount && <AccountDetailModal account={selectedAccount} balance={balances[selectedAccount.id]} transactions={data.transactions.filter(tx => tx.fromAccountId === selectedAccount.id || tx.toAccountId === selectedAccount.id)} accountName={accountName} accountCurrency={accountCurrency} onClose={() => setSelectedAccount(null)} onRename={name => { setData(current => ({ ...current, accounts: current.accounts.map(account => account.id === selectedAccount.id ? { ...account, name } : account) })); setSelectedAccount(current => current ? { ...current, name } : current); showToast('계좌 이름을 저장했어요.'); }} onDeposit={() => openTransaction({ type: 'Income', toAccountId: selectedAccount.id, simple: true })} onTransfer={() => openTransaction({ type: 'Transfer', fromAccountId: selectedAccount.id, toAccountId: data.accounts.find(account => account.id !== selectedAccount.id)?.id, simple: true })} onExpense={() => openTransaction({ type: 'Expense', fromAccountId: selectedAccount.id, simple: true })} />}
     {txPreset && <TransactionModal accounts={data.accounts} loans={data.loans} initialType={txPreset.type} initialFrom={txPreset.fromAccountId} initialTo={txPreset.toAccountId} simple={txPreset.simple} onClose={() => setTxPreset(null)} onSave={tx => { setData(current => ({ ...current, transactions: [...current.transactions, tx] })); setTxPreset(null); showToast('거래를 저장했어요.'); }} />}
@@ -321,37 +327,40 @@ export default function Home() {
 }
 
 function PageHeader({ eyebrow, title, subtitle, action, actionLabel }: { eyebrow: string; title: string; subtitle?: string; action?: () => void; actionLabel?: string }) {
-  return <header className="topbar"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <p className="subtitle">{subtitle}</p>}</div>{action && <button className="primary desktop-action" onClick={action}>{actionLabel}</button>}</header>;
+  return <header className="topbar"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <p className="subtitle">{subtitle}</p>}</div><div className="topbar-side"><span className="app-version" title={`Money Flow ${APP_VERSION}`}>v{APP_VERSION}</span>{action && <button className="primary desktop-action" onClick={action}>{actionLabel}</button>}</div></header>;
 }
 
 function Metric({ label, value, note, tone = '' }: { label: string; value: string; note: string; tone?: string }) { return <article className={`metric-card ${tone}`}><p>{label}</p><strong>{value}</strong><span>{note}</span></article>; }
 function PanelHeading({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) { return <div className="panel-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>{action && <button className="text-button" onClick={onAction}>{action} →</button>}</div>; }
 function Empty({ text }: { text: string }) { return <div className="empty"><span>○</span><p>{text}</p></div>; }
 function TransactionRow({ tx, accountName, accountCurrency, table = false }: { tx: Transaction; accountName: (id?: string) => string; accountCurrency: (id?: string) => Currency; table?: boolean }) {
+  const incoming = tx.type === 'Income' || tx.type === 'Borrow';
   const outgoing = tx.type === 'Expense' || tx.type === 'Repayment';
-  const value = outgoing || tx.type === 'Transfer' || tx.type === 'Borrow' ? tx.sentAmount : tx.receivedAmount;
-  const currency = outgoing || tx.type === 'Transfer' || tx.type === 'Borrow' ? accountCurrency(tx.fromAccountId) : accountCurrency(tx.toAccountId);
-  const route = tx.type === 'Expense' ? accountName(tx.fromAccountId) : tx.type === 'Income' ? accountName(tx.toAccountId) : `${accountName(tx.fromAccountId)} → ${accountName(tx.toAccountId)}`;
+  const value = outgoing || tx.type === 'Transfer' || tx.type === 'Borrow' ? (incoming ? tx.receivedAmount || tx.sentAmount : tx.sentAmount) : tx.receivedAmount;
+  const currency = outgoing || (tx.type === 'Transfer' && !incoming) ? accountCurrency(tx.fromAccountId) : accountCurrency(tx.toAccountId || tx.fromAccountId);
+  const route = tx.type === 'Expense' ? accountName(tx.fromAccountId) : incoming ? accountName(tx.toAccountId) : `${accountName(tx.fromAccountId)} → ${accountName(tx.toAccountId)}`;
+  const loanMark = tx.loanId || tx.type === 'Borrow' ? ' · 대여금' : '';
   return <div className={table ? 'transaction table-row' : 'transaction'}>
-    <span className={`tx-icon ${TYPE_CLASS[tx.type]}`}>{tx.type === 'Expense' ? '↓' : tx.type === 'Income' ? '↑' : tx.type === 'Repayment' ? '✓' : '↗'}</span>
-    <div className="tx-main"><strong>{tx.description}</strong><small>{route}{tx.category ? ` · ${tx.category}` : ''}</small></div>
+    <span className={`tx-icon ${TYPE_CLASS[tx.type]}`}>{outgoing ? '↓' : incoming ? '↑' : tx.type === 'Repayment' ? '✓' : '↗'}</span>
+    <div className="tx-main"><strong>{tx.description}</strong><small>{route}{tx.category ? ` · ${tx.category}` : ''}{loanMark}</small></div>
     {table && <span className={`type-pill ${TYPE_CLASS[tx.type]}`}>{TYPE_LABEL[tx.type]}</span>}
     {table && <time>{tx.date}</time>}
-    <b className={outgoing ? 'negative' : tx.type === 'Income' ? 'positive' : ''}>{outgoing ? '− ' : tx.type === 'Income' ? '+ ' : ''}{money(value || 0, currency)}</b>
+    <b className={outgoing ? 'negative' : incoming ? 'positive' : ''}>{outgoing ? '− ' : incoming ? '+ ' : ''}{money(value || 0, currency)}</b>
   </div>;
 }
 
-function TransactionModal({ accounts, loans, initialType, initialFrom, initialTo, simple, onClose, onSave }: { accounts: Account[]; loans: Loan[]; initialType: TxType; initialFrom?: string; initialTo?: string; simple?: boolean; onClose: () => void; onSave: (tx: Transaction) => void }) {
-  const types = simple ? ACCOUNT_TX_TYPES : (Object.keys(TYPE_LABEL) as TxType[]);
-  const [type, setType] = useState<TxType>(initialType);
+function TransactionModal({ accounts, loans, initialType, initialFrom, initialTo, onClose, onSave }: { accounts: Account[]; loans: Loan[]; initialType: TxType; initialFrom?: string; initialTo?: string; simple?: boolean; onClose: () => void; onSave: (tx: Transaction) => void }) {
+  const types = ACCOUNT_TX_TYPES;
+  const [type, setType] = useState<TxType>(ACCOUNT_TX_TYPES.includes(initialType) ? initialType : 'Income');
   const [from, setFrom] = useState(initialFrom || accounts[2]?.id || accounts[0]?.id || '');
   const [to, setTo] = useState(initialTo || accounts.find(account => account.id !== initialFrom)?.id || accounts[0]?.id || '');
-  const [sent, setSent] = useState(''); const [received, setReceived] = useState(''); const [fee, setFee] = useState('');
-  const [rate, setRate] = useState(''); const [loanId, setLoanId] = useState(loans[0]?.id || '');
+  const [sent, setSent] = useState(''); const [received, setReceived] = useState('');
+  const [rate, setRate] = useState(''); const [isLoan, setIsLoan] = useState(false); const [loanId, setLoanId] = useState(loans[0]?.id || '');
   const fromAccount = accounts.find(a => a.id === from); const toAccount = accounts.find(a => a.id === to);
   const fromCurrency = fromAccount?.currency || 'CAD'; const toCurrency = toAccount?.currency || 'CAD';
   const isTransfer = type === 'Transfer';
-  const isDual = ['Transfer', 'Borrow', 'Repayment'].includes(type);
+  const isIncome = type === 'Income';
+  const isDual = type === 'Transfer';
   const sameCurrency = fromCurrency === toCurrency;
   useEffect(() => {
     if (isDual && !sameCurrency) { setRate(''); setReceived(''); }
@@ -384,13 +393,12 @@ function TransactionModal({ accounts, loans, initialType, initialFrom, initialTo
     if (!description) return;
     const tx: Transaction = { id: crypto.randomUUID(), type, date, description, category: String(form.get('category') || '') || undefined };
     if (type === 'Expense') { tx.fromAccountId = from; tx.sentAmount = Number(sent); }
-    else if (type === 'Income') { tx.toAccountId = to; tx.receivedAmount = Number(received || sent); }
-    else { tx.fromAccountId = from; tx.toAccountId = to; tx.sentAmount = Number(sent); tx.receivedAmount = Number(received || sent); tx.fee = Number(fee) || undefined; tx.exchangeRate = sameCurrency ? 1 : Number(rate) || undefined; if (type === 'Borrow' || type === 'Repayment' || loanId) tx.loanId = loanId || undefined; }
+    else { tx.toAccountId = to; tx.receivedAmount = Number(received || sent); if (isLoan && loanId) { tx.loanId = loanId; tx.category = tx.category || '대여금'; } }
     onSave(tx);
   };
   const accountOptions = (excludeId?: string) => accounts.filter(account => account.id !== excludeId).map(a => <option key={a.id} value={a.id}>{a.name} · {a.currency}</option>);
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="tx-title"><div className="modal-head"><div><p className="eyebrow">NEW TRANSACTION</p><h2 id="tx-title">{isTransfer ? '송금' : '거래 추가'}</h2></div><button className="close" onClick={onClose} aria-label="닫기">×</button></div>
-    <form onSubmit={submit}><div className={`type-selector${simple ? ' simple' : ''}`}>{types.map(item => <button type="button" key={item} onClick={() => setType(item)} className={type === item ? 'active' : ''}>{simple ? ACCOUNT_TX_LABEL[item as (typeof ACCOUNT_TX_TYPES)[number]] : TYPE_LABEL[item]}</button>)}</div>
+    <form onSubmit={submit}><div className="type-selector simple">{types.map(item => <button type="button" key={item} onClick={() => setType(item)} className={type === item ? 'active' : ''}>{ACCOUNT_TX_LABEL[item]}</button>)}</div>
       {isTransfer ? <>
         <label>날짜<input required name="date" type="date" defaultValue="2026-09-01" /></label>
         <label>금액 ({fromCurrency})<input required min="0" step="any" inputMode="decimal" value={sent} onChange={e => setSent(e.target.value)} type="number" /></label>
@@ -400,14 +408,15 @@ function TransactionModal({ accounts, loans, initialType, initialFrom, initialTo
           : <label>환율 (1 CAD = KRW)<input required min="0" step="any" placeholder="이번 송금의 환율 입력" value={rate} onChange={e => setRate(e.target.value)} type="number" />
             {received && <small className="field-help">{money(Number(sent) || 0, fromCurrency)} → {money(Number(received) || 0, toCurrency)}</small>}</label>}
       </> : <>
-        <div className="form-grid"><label>날짜<input required name="date" type="date" defaultValue="2026-09-01" /></label><label>설명<input required name="description" placeholder="예: 장보기, 해외 송금" /></label></div>
-        <label>카테고리<input name="category" placeholder="식비, 교통, 급여 등" /></label>
-        {type !== 'Income' && <label>현재 통장 (출금)<select value={from} onChange={e => setFrom(e.target.value)}>{accountOptions()}</select></label>}
-        {type !== 'Expense' && <label>{type === 'Income' ? '입금할 통장' : '대상 통장'}<select value={to} onChange={e => setTo(e.target.value)}>{accountOptions(isDual ? from : undefined)}</select></label>}
-        <div className="form-grid"><label>{type === 'Income' ? `받은 금액 (${toCurrency})` : `보낸 금액 (${fromCurrency})`}<input required min="0" step="any" inputMode="decimal" value={type === 'Income' ? received : sent} onChange={e => type === 'Income' ? setReceived(e.target.value) : setSent(e.target.value)} type="number" /></label>
-          {isDual && <label>입금 금액 ({toCurrency})<input className="calculated" required readOnly min="0" step="any" inputMode="decimal" value={received} type="number" /></label>}</div>
-        {isDual && <div className="form-grid"><label>수수료 ({fromCurrency})<input min="0" step="any" value={fee} onChange={e => setFee(e.target.value)} type="number" /></label>{sameCurrency ? <div className="conversion-note"><span>동일 통화</span><strong>보낸 금액과 같은 금액이 입금됩니다.</strong></div> : <label>환율 (1 CAD = KRW)<input required min="0" step="any" placeholder="이번 송금의 환율 입력" value={rate} onChange={e => setRate(e.target.value)} type="number" /><small className="field-help">이 환율은 현재 송금에만 적용됩니다.</small></label>}</div>}
-        {(type === 'Borrow' || type === 'Repayment') && <label>연결할 대여금<select value={loanId} onChange={e => setLoanId(e.target.value)}><option value="">선택 안 함</option>{loans.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>}
+        <div className="form-grid"><label>날짜<input required name="date" type="date" defaultValue="2026-09-01" /></label><label>설명<input required name="description" placeholder={isIncome ? '예: 급여, 대여금' : '예: 장보기'} /></label></div>
+        <label>카테고리<input name="category" placeholder={isIncome ? '급여, 대여금 등' : '식비, 교통 등'} /></label>
+        {isIncome ? <label>입금할 통장<select value={to} onChange={e => setTo(e.target.value)}>{accountOptions()}</select></label>
+          : <label>현재 통장 (출금)<select value={from} onChange={e => setFrom(e.target.value)}>{accountOptions()}</select></label>}
+        <label>{isIncome ? `받은 금액 (${toCurrency})` : `보낸 금액 (${fromCurrency})`}<input required min="0" step="any" inputMode="decimal" value={isIncome ? received : sent} onChange={e => isIncome ? setReceived(e.target.value) : setSent(e.target.value)} type="number" /></label>
+        {isIncome && <>
+          <label className="check"><input type="checkbox" checked={isLoan} onChange={e => setIsLoan(e.target.checked)} /><span>대여금으로 지정</span></label>
+          {isLoan && (loans.length ? <label>대여금<select value={loanId} onChange={e => setLoanId(e.target.value)}>{loans.map(loan => <option key={loan.id} value={loan.id}>{loan.name}</option>)}</select></label> : <p className="form-note">등록된 대여금이 없어요. 대여금 탭에서 먼저 추가하세요.</p>)}
+        </>}
       </>}
       <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>취소</button><button className="primary" type="submit">{isTransfer ? '송금하기' : '거래 저장'}</button></div>
     </form></section></div>;
@@ -422,9 +431,9 @@ function AccountDetailModal({ account, balance, transactions, accountName, accou
     if (!next) { setName(account.name); return; }
     if (next !== account.name) onRename(next);
   };
-  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal account-detail" role="dialog" aria-modal="true" aria-labelledby="account-detail-title"><div className="modal-head"><div><p className="eyebrow">ACCOUNT</p><h2 id="account-detail-title"><input className="account-title-input" value={name} onChange={event => setName(event.target.value)} onBlur={commitName} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setName(account.name); event.currentTarget.blur(); } }} aria-label="계좌 이름" /></h2></div><button className="close" onClick={onClose} aria-label="닫기">×</button></div>
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><section className="modal account-detail" role="dialog" aria-modal="true" aria-labelledby="account-detail-title"><div className="modal-head"><div className="account-title-block"><p className="eyebrow">ACCOUNT</p><input id="account-detail-title" className="account-title-input" value={name} onChange={event => setName(event.target.value)} onBlur={commitName} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setName(account.name); event.currentTarget.blur(); } }} aria-label="계좌 이름" /><p className="account-title-hint">이름을 눌러 바로 수정</p></div><button className="close" onClick={onClose} aria-label="닫기">×</button></div>
     <div className="detail-balance"><span>현재 잔액 · {account.currency}</span><strong>{money(balance, account.currency)}</strong><small>기준 금액 0 · 모든 금액은 거래로 계산</small></div>
-    <div className="account-actions"><button className="action-deposit" onClick={onDeposit}><span>＋</span><b>입금</b><small>잔액 채우기</small></button><button className="action-transfer" onClick={onTransfer}><span>↗</span><b>송금</b><small>다른 통장으로</small></button><button className="action-expense" onClick={onExpense}><span>−</span><b>지출</b><small>내역 기록</small></button></div>
+    <div className="account-actions"><button className="action-deposit" onClick={onDeposit}><span>＋</span><b>입금</b><small>일반 · 대여금 지정</small></button><button className="action-transfer" onClick={onTransfer}><span>↗</span><b>송금</b><small>다른 통장으로</small></button><button className="action-expense" onClick={onExpense}><span>−</span><b>지출</b><small>내역 기록</small></button></div>
     <div className="detail-history"><div className="detail-history-title"><h3>이 통장의 최근 출납</h3><span>{transactions.length}건</span></div>{recent.length ? recent.map(tx => <TransactionRow key={tx.id} tx={tx} accountName={accountName} accountCurrency={accountCurrency} />) : <Empty text="입금부터 시작해 보세요." />}</div>
   </section></div>;
 }
