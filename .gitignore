@@ -1,1 +1,25 @@
-node_modules
+# dependencies
+node_modules/
+
+# macOS
+.DS_Store
+._*
+
+# env / secrets
+.env
+.env.*
+
+# build / cache
+.next/
+dist/
+gh-pages/
+.wrangler/
+*.tsbuildinfo
+
+# logs
+*.log
+npm-debug.log*
+
+# scratch files
+**/temp.txt
+**/test.txt
